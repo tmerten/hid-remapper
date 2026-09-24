@@ -594,6 +594,15 @@ static void auth_cancel(struct bt_conn* conn) {
     LOG_WRN("%s", addr);
 }
 
+static enum bt_security_err pairing_accept(struct bt_conn* conn, const struct bt_conn_pairing_feat* feat) {
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    LOG_INF("pairing features: %s, io_capability=%u, oob=%u, auth_req=0x%02x, key_size=%u, init_keys=0x%02x, resp_keys=0x%02x",
+            addr, feat->io_capability, feat->oob_data_flag, feat->auth_req,
+            feat->max_enc_key_size, feat->init_key_dist, feat->resp_key_dist);
+    return BT_SECURITY_ERR_SUCCESS;
+}
+
 static void pairing_complete(struct bt_conn* conn, bool bonded) {
     char addr[BT_ADDR_LE_STR_LEN];
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
@@ -607,6 +616,7 @@ static void pairing_failed(struct bt_conn* conn, enum bt_security_err reason) {
 }
 
 static struct bt_conn_auth_cb conn_auth_callbacks = {
+    .pairing_accept = pairing_accept,
     .cancel = auth_cancel,
 };
 
