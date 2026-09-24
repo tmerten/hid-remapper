@@ -1,5 +1,7 @@
 # Bluetooth version
 
+This branch has diagnostic information baked in and enabled.
+
 _(Please note this is experimental and hasn't been tested with a lot of devices.)_
 
 There's a special version of the remapper that takes inputs from Bluetooth devices and translates them to USB. It's different from most Bluetooth USB dongles in that from the computer's point of view it is a USB mouse/keyboard, so it requires no special drivers. The remapping functionality works as usual. You can connect multiple devices to it at the same time.
