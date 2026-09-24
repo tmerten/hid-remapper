@@ -112,7 +112,7 @@ static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 static bool scanning = false;
 static bool peers_only = true;
 
-static struct bt_le_conn_param* conn_param = BT_LE_CONN_PARAM(6, 6, 44, 400);
+static struct bt_le_conn_param* conn_param = BT_LE_CONN_PARAM_DEFAULT;
 
 static void activity_led_off_work_fn(struct k_work* work) {
     gpio_pin_set_dt(&led0, false);
@@ -453,7 +453,6 @@ static void le_param_updated(struct bt_conn* conn, uint16_t interval, uint16_t l
 
 static bool le_param_req(struct bt_conn* conn, struct bt_le_conn_param* param) {
     LOG_INF("interval_min=%d, interval_max=%d, latency=%d, timeout=%d", param->interval_min, param->interval_max, param->latency, param->timeout);
-    param->interval_max = param->interval_min;
     return true;
 }
 
