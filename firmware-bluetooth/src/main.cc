@@ -594,6 +594,7 @@ static void auth_cancel(struct bt_conn* conn) {
     LOG_WRN("%s", addr);
 }
 
+/* print debug info, check if we want to keep that */
 static enum bt_security_err pairing_accept(struct bt_conn* conn, const struct bt_conn_pairing_feat* feat) {
     char addr[BT_ADDR_LE_STR_LEN];
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
