@@ -15,7 +15,7 @@ jobs:
       - name: Build XIAO SMP trace
         run: |
           docker run -v $PWD:/workdir/project -w /workdir/project/firmware-bluetooth nordicplayground/nrfconnect-sdk:v2.2-branch \
-            sh -ec 'sdk_zephyr="${ZEPHYR_BASE:?Zephyr SDK path is missing}"; patch=/workdir/project/firmware-bluetooth/diagnostics/smp-opcodes.patch; git -C "$sdk_zephyr" apply --check "$patch"; git -C "$sdk_zephyr" apply "$patch"; west build -b seeed_xiao_nrf52840 -- -DEXTRA_CONF_FILE=/workdir/project/firmware-bluetooth/diagnostics/smp.conf'
+            /bin/bash /workdir/project/firmware-bluetooth/diagnostics/build-debug.sh
           cp firmware-bluetooth/build/zephyr/remapper.uf2 firmware-bluetooth/remapper_seeed_xiao_nrf52840_debug.uf2
       - uses: actions/upload-artifact@v7
         with:
