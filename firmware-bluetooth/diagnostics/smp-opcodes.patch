@@ -1,0 +1,64 @@
+diff --git a/subsys/bluetooth/host/smp.c b/subsys/bluetooth/host/smp.c
+--- a/subsys/bluetooth/host/smp.c
++++ b/subsys/bluetooth/host/smp.c
+@@ -498,13 +498,16 @@ static struct net_buf *smp_create_pdu(struct bt_smp *smp, uint8_t op, size_t len)
+ 	/* Use smaller timeout if returning an error since that could be
+ 	 * caused by lack of buffers.
+ 	 */
++	BT_INFO("SMP alloc start op=0x%02x", op);
+ 	buf = bt_l2cap_create_pdu_timeout(NULL, 0, timeout);
+ 	if (!buf) {
++		BT_INFO("SMP alloc failed op=0x%02x", op);
+ 		/* If it was not possible to allocate a buffer within the
+ 		 * timeout marked it as timed out.
+ 		 */
+ 		atomic_set_bit(smp->flags, SMP_FLAG_TIMEOUT);
+ 		return NULL;
+ 	}
++	BT_INFO("SMP alloc ok op=0x%02x", op);
+ 
+ 	hdr = net_buf_add(buf, sizeof(*hdr));
+@@ -1963,7 +1966,10 @@ static void smp_pairing_complete(struct bt_smp *smp, uint8_t status)
+ static void smp_timeout(struct k_work *work)
+ {
+ 	struct bt_smp *smp = CONTAINER_OF(work, struct bt_smp, work);
+ 
++	BT_INFO("SMP timeout user_wait=%u keys_distribution=%u",
++		atomic_test_bit(smp->flags, SMP_FLAG_USER),
++		atomic_test_bit(smp->flags, SMP_FLAG_KEYS_DISTR));
+ 	BT_ERR("SMP Timeout");
+ 
+ 	smp_pairing_complete(smp, BT_SMP_ERR_UNSPECIFIED);
+@@ -1977,10 +1983,17 @@ static void smp_timeout(struct k_work *work)
+ static void smp_send(struct bt_smp *smp, struct net_buf *buf,
+ 		     bt_conn_tx_cb_t cb, void *user_data)
+ {
+-	if (bt_l2cap_send_cb(smp->chan.chan.conn, BT_L2CAP_CID_SMP, buf, cb, NULL)) {
++	uint8_t op = buf->data[0];
++	int err;
++
++	BT_INFO("SMP tx start op=0x%02x len=%u", op, buf->len);
++	err = bt_l2cap_send_cb(smp->chan.chan.conn, BT_L2CAP_CID_SMP, buf, cb, NULL);
++	if (err) {
++		BT_INFO("SMP tx failed op=0x%02x err=%d", op, err);
+ 		net_buf_unref(buf);
+ 		return;
+ 	}
+ 
++	BT_INFO("SMP tx queued op=0x%02x", op);
+ 	k_work_reschedule(&smp->work, SMP_TIMEOUT);
+ }
+@@ -4597,4 +4610,5 @@ static int bt_smp_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
+ 	}
+ 
+ 	hdr = net_buf_pull_mem(buf, sizeof(*hdr));
++	BT_INFO("SMP rx op=0x%02x len=%u", hdr->code, buf->len);
+ 	BT_DBG("Received SMP code 0x%02x len %u", hdr->code, buf->len);
+@@ -4641,6 +4655,7 @@ static int bt_smp_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
+ 	}
+ 
+ 	err = handlers[hdr->code].func(smp, buf);
++	BT_INFO("SMP handler op=0x%02x result=%u", hdr->code, err);
+ 	if (err) {
+ 		smp_error(smp, err);
+ 	}
