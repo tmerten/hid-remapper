@@ -10,6 +10,12 @@ patches=(
     "$diag/encryption-ll-trace.patch"
 )
 
+# Kconfig fragments merged after prj.conf. Keep experiments to one variable.
+overlays=(
+    "$diag/smp.conf"
+    "$diag/experiment-no-auto-phy.conf"
+)
+
 git -C "$sdk_zephyr" describe --tags --always 2>/dev/null || true
 
 for patch in "${patches[@]}"; do
@@ -18,4 +24,27 @@ for patch in "${patches[@]}"; do
     git -C "$sdk_zephyr" apply "$patch"
 done
 
-west build -b seeed_xiao_nrf52840 -- -DEXTRA_CONF_FILE="$diag/smp.conf"
+# Zephyr 3.2 (NCS 2.2) only knows OVERLAY_CONFIG (space-separated list).
+# EXTRA_CONF_FILE was added in a later Zephyr and is silently ignored here.
+west build -b seeed_xiao_nrf52840 -- -DOVERLAY_CONFIG="${overlays[*]}"
+
+# Fail the build if any fragment assignment did not end up in the final config.
+config=build/zephyr/.config
+for overlay in "${overlays[@]}"; do
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            '' | '#'*) continue ;;
+        esac
+        name="${line%%=*}"
+        if [ "${line#*=}" = "n" ]; then
+            expected="# $name is not set"
+        else
+            expected="$line"
+        fi
+        if ! grep -qxF "$expected" "$config"; then
+            echo "Kconfig fragment not applied: $(basename "$overlay"): $line" >&2
+            exit 1
+        fi
+        echo "Kconfig applied: $line"
+    done < "$overlay"
+done
