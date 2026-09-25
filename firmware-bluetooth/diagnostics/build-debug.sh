@@ -5,9 +5,11 @@ sdk_zephyr="${ZEPHYR_BASE:-/workdir/zephyr}"
 diag=/workdir/project/firmware-bluetooth/diagnostics
 
 # Order matters: encryption-ll-trace.patch is made on top of smp-opcodes.patch.
+# scan-trace.patch only touches scan.c and was made on top of both.
 patches=(
     "$diag/smp-opcodes.patch"
     "$diag/encryption-ll-trace.patch"
+    "$diag/scan-trace.patch"
 )
 
 # Kconfig fragments merged after prj.conf. Keep experiments to one variable.

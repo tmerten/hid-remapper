@@ -1,0 +1,193 @@
+diff --git a/subsys/bluetooth/host/scan.c b/subsys/bluetooth/host/scan.c
+index 54873758..38ef4a66 100644
+--- a/subsys/bluetooth/host/scan.c
++++ b/subsys/bluetooth/host/scan.c
+@@ -21,6 +21,9 @@
+ #include "conn_internal.h"
+ #include "direction_internal.h"
+ #include "id.h"
++#if defined(CONFIG_BT_SMP)
++#include "keys.h"
++#endif
+ 
+ #define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_HCI_CORE)
+ #define LOG_MODULE_NAME bt_scan
+@@ -123,6 +126,7 @@ static int bt_le_scan_set_enable_legacy(uint8_t enable)
+ 	struct bt_hci_cp_le_set_scan_enable *cp;
+ 	struct bt_hci_cmd_state_set state;
+ 	struct net_buf *buf;
++	uint8_t filter_dup;
+ 	int err;
+ 
+ 	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_SCAN_ENABLE, sizeof(*cp));
+@@ -140,11 +144,15 @@ static int bt_le_scan_set_enable_legacy(uint8_t enable)
+ 	}
+ 
+ 	cp->enable = enable;
++	filter_dup = cp->filter_dup;
+ 
+ 	bt_hci_cmd_state_set_init(buf, &state, bt_dev.flags, BT_DEV_SCANNING,
+ 				  enable == BT_HCI_LE_SCAN_ENABLE);
+ 
+ 	err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_SET_SCAN_ENABLE, buf, NULL);
++	BT_INFO("SCAN %s filter_dup=%u err=%d",
++		enable == BT_HCI_LE_SCAN_ENABLE ? "enable" : "disable",
++		filter_dup, err);
+ 	if (err) {
+ 		return err;
+ 	}
+@@ -265,6 +273,10 @@ static int start_le_scan_legacy(uint8_t scan_type, uint16_t interval, uint16_t w
+ 		return err;
+ 	}
+ 
++	BT_INFO("SCAN params type=%u interval=%u window=%u own_addr_type=%u filter_policy=%u",
++		scan_type, interval, window, set_param.addr_type,
++		set_param.filter_policy);
++
+ 	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_SCAN_PARAM, sizeof(set_param));
+ 	if (!buf) {
+ 		return -ENOBUFS;
+@@ -434,6 +446,134 @@ static uint8_t get_adv_props_legacy(uint8_t evt_type)
+ 	}
+ }
+ 
++/* Diagnostic trace (hid-remapper debug build, diagnostics/scan-trace.patch).
++ * Logs metadata of advertising reports that reach the host from bonded peers,
++ * from addresses that differ from a bonded one only in the last byte, and all
++ * directed advertising. Rate-limited per address and advertising type.
++ */
++#define DIAG_ADV_SLOTS 8
++#define DIAG_ADV_INTERVAL_MS 2000
++#define DIAG_UUID_HIDS 0x1812
++
++static struct {
++	bt_addr_le_t addr;
++	uint8_t adv_type;
++	int64_t last_ms;
++} diag_adv_seen[DIAG_ADV_SLOTS];
++
++struct diag_bond_match {
++	const bt_addr_le_t *addr;
++	uint8_t match; /* 0: none, 1: bonded, 2: bonded except last byte */
++};
++
++#if defined(CONFIG_BT_SMP)
++static void diag_bond_match_cb(struct bt_keys *keys, void *data)
++{
++	struct diag_bond_match *m = data;
++
++	if (m->match == 1U || keys->addr.type != m->addr->type) {
++		return;
++	}
++
++	if (bt_addr_le_eq(&keys->addr, m->addr)) {
++		m->match = 1U;
++	} else if (!memcmp(&keys->addr.a.val[1], &m->addr->a.val[1],
++			   sizeof(keys->addr.a.val) - 1)) {
++		m->match = 2U;
++	}
++}
++#endif /* CONFIG_BT_SMP */
++
++static bool diag_adv_rate_ok(const bt_addr_le_t *addr, uint8_t adv_type)
++{
++	int64_t now = k_uptime_get();
++	size_t oldest = 0;
++
++	for (size_t i = 0; i < ARRAY_SIZE(diag_adv_seen); i++) {
++		if (diag_adv_seen[i].last_ms != 0 &&
++		    diag_adv_seen[i].adv_type == adv_type &&
++		    bt_addr_le_eq(&diag_adv_seen[i].addr, addr)) {
++			if (now - diag_adv_seen[i].last_ms < DIAG_ADV_INTERVAL_MS) {
++				return false;
++			}
++
++			diag_adv_seen[i].last_ms = now;
++			return true;
++		}
++
++		if (diag_adv_seen[i].last_ms < diag_adv_seen[oldest].last_ms) {
++			oldest = i;
++		}
++	}
++
++	bt_addr_le_copy(&diag_adv_seen[oldest].addr, addr);
++	diag_adv_seen[oldest].adv_type = adv_type;
++	diag_adv_seen[oldest].last_ms = now;
++
++	return true;
++}
++
++static void diag_adv_trace(const bt_addr_le_t *raw_addr,
++			   const bt_addr_le_t *id_addr,
++			   const struct bt_le_scan_recv_info *info,
++			   const struct net_buf_simple *buf, uint16_t len)
++{
++	struct diag_bond_match m = { .addr = id_addr, .match = 0U };
++	char addr_str[BT_ADDR_LE_STR_LEN];
++	uint8_t types[6] = { 0 };
++	uint8_t ntypes = 0U;
++	uint8_t flags = 0xffU; /* 0xff: no Flags AD field */
++	bool hids = false;
++	uint16_t off = 0U;
++
++#if defined(CONFIG_BT_SMP)
++	bt_keys_foreach_type(BT_KEYS_ALL, diag_bond_match_cb, &m);
++#endif
++
++	if (m.match == 0U && info->adv_type != BT_GAP_ADV_TYPE_ADV_DIRECT_IND) {
++		return;
++	}
++
++	if (!diag_adv_rate_ok(id_addr, info->adv_type)) {
++		return;
++	}
++
++	while (off + 1U < len) {
++		uint8_t field_len = buf->data[off];
++		uint8_t type;
++
++		if (field_len == 0U || off + 1U + field_len > len) {
++			break;
++		}
++
++		type = buf->data[off + 1U];
++		if (ntypes < ARRAY_SIZE(types)) {
++			types[ntypes++] = type;
++		}
++
++		if (type == BT_DATA_FLAGS && field_len >= 2U) {
++			flags = buf->data[off + 2U];
++		} else if (type == BT_DATA_UUID16_SOME ||
++			   type == BT_DATA_UUID16_ALL) {
++			for (uint16_t i = off + 2U; i + 1U < off + 1U + field_len;
++			     i += 2U) {
++				if (sys_get_le16(&buf->data[i]) == DIAG_UUID_HIDS) {
++					hids = true;
++				}
++			}
++		}
++
++		off += 1U + field_len;
++	}
++
++	bt_addr_le_to_str(id_addr, addr_str, sizeof(addr_str));
++	BT_INFO("ADV %s %s raw_type=%u adv_type=%u rssi=%d len=%u flags=0x%02x hids=%u ad=%02x %02x %02x %02x %02x %02x",
++		m.match == 1U ? "bonded" : (m.match == 2U ? "near-bonded" : "direct"),
++		addr_str, raw_addr->type, info->adv_type, info->rssi, len,
++		flags, hids, types[0], types[1], types[2], types[3], types[4],
++		types[5]);
++}
++
+ static void le_adv_recv(bt_addr_le_t *addr, struct bt_le_scan_recv_info *info,
+ 			struct net_buf_simple *buf, uint16_t len)
+ {
+@@ -463,6 +603,8 @@ static void le_adv_recv(bt_addr_le_t *addr, struct bt_le_scan_recv_info *info,
+ 				bt_lookup_id_addr(BT_ID_DEFAULT, addr));
+ 	}
+ 
++	diag_adv_trace(addr, &id_addr, info, buf, len);
++
+ 	if (scan_dev_found_cb) {
+ 		net_buf_simple_save(buf, &state);
+ 
