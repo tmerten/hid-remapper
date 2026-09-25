@@ -1,0 +1,280 @@
+diff --git a/subsys/bluetooth/host/conn.c b/subsys/bluetooth/host/conn.c
+index ad3eafcd..ace1e642 100644
+--- a/subsys/bluetooth/host/conn.c
++++ b/subsys/bluetooth/host/conn.c
+@@ -1968,9 +1968,12 @@ int bt_conn_le_start_encryption(struct bt_conn *conn, uint8_t rand[8],
+ {
+ 	struct bt_hci_cp_le_start_encryption *cp;
+ 	struct net_buf *buf;
++	int err;
+ 
+ 	buf = bt_hci_cmd_create(BT_HCI_OP_LE_START_ENCRYPTION, sizeof(*cp));
+ 	if (!buf) {
++		BT_INFO("ENC LE Start Encryption handle=%u no cmd buffer",
++			conn->handle);
+ 		return -ENOBUFS;
+ 	}
+ 
+@@ -1984,7 +1987,11 @@ int bt_conn_le_start_encryption(struct bt_conn *conn, uint8_t rand[8],
+ 		(void)memset(cp->ltk + len, 0, sizeof(cp->ltk) - len);
+ 	}
+ 
+-	return bt_hci_cmd_send_sync(BT_HCI_OP_LE_START_ENCRYPTION, buf, NULL);
++	err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_START_ENCRYPTION, buf, NULL);
++	BT_INFO("ENC LE Start Encryption handle=%u key_len=%u cmd_status_err=%d",
++		conn->handle, (unsigned int)len, err);
++
++	return err;
+ }
+ #endif /* CONFIG_BT_SMP */
+ 
+@@ -2828,10 +2835,13 @@ int bt_conn_le_conn_update(struct bt_conn *conn,
+ {
+ 	struct hci_cp_le_conn_update *conn_update;
+ 	struct net_buf *buf;
++	int err;
+ 
+ 	buf = bt_hci_cmd_create(BT_HCI_OP_LE_CONN_UPDATE,
+ 				sizeof(*conn_update));
+ 	if (!buf) {
++		BT_INFO("LL conn update cmd handle=%u no cmd buffer",
++			conn->handle);
+ 		return -ENOBUFS;
+ 	}
+ 
+@@ -2843,7 +2853,12 @@ int bt_conn_le_conn_update(struct bt_conn *conn,
+ 	conn_update->conn_latency = sys_cpu_to_le16(param->latency);
+ 	conn_update->supervision_timeout = sys_cpu_to_le16(param->timeout);
+ 
+-	return bt_hci_cmd_send_sync(BT_HCI_OP_LE_CONN_UPDATE, buf, NULL);
++	err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_CONN_UPDATE, buf, NULL);
++	BT_INFO("LL conn update cmd handle=%u min=%u max=%u latency=%u timeout=%u cmd_status_err=%d",
++		conn->handle, param->interval_min, param->interval_max,
++		param->latency, param->timeout, err);
++
++	return err;
+ }
+ 
+ #if defined(CONFIG_NET_BUF_LOG)
+diff --git a/subsys/bluetooth/host/hci_core.c b/subsys/bluetooth/host/hci_core.c
+index 813002e7..c09c0650 100644
+--- a/subsys/bluetooth/host/hci_core.c
++++ b/subsys/bluetooth/host/hci_core.c
+@@ -786,6 +786,8 @@ static void hci_disconn_complete(struct net_buf *buf)
+ 
+ 	BT_DBG("status 0x%02x handle %u reason 0x%02x", evt->status, handle,
+ 	       evt->reason);
++	BT_INFO("LL disconn complete handle=%u status=0x%02x reason=0x%02x",
++		handle, evt->status, evt->reason);
+ 
+ 	if (evt->status) {
+ 		return;
+@@ -1014,10 +1016,18 @@ static void conn_auto_initiate(struct bt_conn *conn)
+ 		return;
+ 	}
+ 
++	BT_INFO("LL auto handle=%u role=%u feat_exch_done=%u local_2m=%u local_dle=%u",
++		conn->handle, conn->role,
++		atomic_test_bit(conn->flags, BT_CONN_AUTO_FEATURE_EXCH),
++		BT_FEAT_LE_PHY_2M(bt_dev.le.features) ? 1U : 0U,
++		BT_FEAT_LE_DLE(bt_dev.le.features) ? 1U : 0U);
++
+ 	if (!atomic_test_bit(conn->flags, BT_CONN_AUTO_FEATURE_EXCH) &&
+ 	    ((conn->role == BT_HCI_ROLE_CENTRAL) ||
+ 	     BT_FEAT_LE_PER_INIT_FEAT_XCHG(bt_dev.le.features))) {
+ 		err = hci_le_read_remote_features(conn);
++		BT_INFO("LL auto handle=%u read_remote_features cmd_status_err=%d",
++			conn->handle, err);
+ 		if (err) {
+ 			BT_ERR("Failed read remote features (%d)", err);
+ 		}
+@@ -1037,6 +1047,8 @@ static void conn_auto_initiate(struct bt_conn *conn)
+ 		err = bt_le_set_phy(conn, 0U, BT_HCI_LE_PHY_PREFER_2M,
+ 				    BT_HCI_LE_PHY_PREFER_2M,
+ 				    BT_HCI_LE_PHY_CODED_ANY);
++		BT_INFO("LL auto handle=%u set_phy_2m cmd_status_err=%d",
++			conn->handle, err);
+ 		if (err) {
+ 			BT_ERR("Failed LE Set PHY (%d)", err);
+ 		}
+@@ -1051,6 +1063,8 @@ static void conn_auto_initiate(struct bt_conn *conn)
+ 			if (!err) {
+ 				err = bt_le_set_data_len(conn,
+ 						tx_octets, tx_time);
++				BT_INFO("LL auto handle=%u set_data_len tx=%u/%uus cmd_status_err=%d",
++					conn->handle, tx_octets, tx_time, err);
+ 				if (err) {
+ 					BT_ERR("Failed to set data len (%d)", err);
+ 				}
+@@ -1059,6 +1073,8 @@ static void conn_auto_initiate(struct bt_conn *conn)
+ 			/* No need to auto-initiate DLE procedure.
+ 			 * It is done by the controller.
+ 			 */
++			BT_INFO("LL auto handle=%u data_len left to controller",
++				conn->handle);
+ 		}
+ 	}
+ }
+@@ -1370,6 +1386,11 @@ void bt_hci_le_enh_conn_complete(struct bt_hci_evt_le_enh_conn_complete *evt)
+ 		bt_conn_set_state(conn, BT_CONN_DISCONNECT_COMPLETE);
+ 	}
+ 
++	BT_INFO("LL connected handle=%u role=%u peer_tail=%02x:%02x interval=%u latency=%u timeout=%u",
++		conn->handle, conn->role, conn->le.dst.a.val[1],
++		conn->le.dst.a.val[0], conn->le.interval, conn->le.latency,
++		conn->le.timeout);
++
+ 	bt_conn_connected(conn);
+ 
+ 	/* Start auto-initiated procedures */
+@@ -1423,6 +1444,9 @@ static void le_remote_feat_complete(struct net_buf *buf)
+ 	uint16_t handle = sys_le16_to_cpu(evt->handle);
+ 	struct bt_conn *conn;
+ 
++	BT_INFO("LL remote features handle=%u status=0x%02x feat0=0x%02x feat1=0x%02x",
++		handle, evt->status, evt->features[0], evt->features[1]);
++
+ 	conn = bt_conn_lookup_handle(handle);
+ 	if (!conn) {
+ 		BT_ERR("Unable to lookup conn for handle %u", handle);
+@@ -1451,6 +1475,12 @@ static void le_data_len_change(struct net_buf *buf)
+ 	uint16_t handle = sys_le16_to_cpu(evt->handle);
+ 	struct bt_conn *conn;
+ 
++	BT_INFO("LL data len change handle=%u tx=%u/%uus rx=%u/%uus", handle,
++		sys_le16_to_cpu(evt->max_tx_octets),
++		sys_le16_to_cpu(evt->max_tx_time),
++		sys_le16_to_cpu(evt->max_rx_octets),
++		sys_le16_to_cpu(evt->max_rx_time));
++
+ 	conn = bt_conn_lookup_handle(handle);
+ 	if (!conn) {
+ 		BT_ERR("Unable to lookup conn for handle %u", handle);
+@@ -1484,6 +1514,9 @@ static void le_phy_update_complete(struct net_buf *buf)
+ 	uint16_t handle = sys_le16_to_cpu(evt->handle);
+ 	struct bt_conn *conn;
+ 
++	BT_INFO("LL PHY update complete handle=%u status=0x%02x tx=%u rx=%u",
++		handle, evt->status, evt->tx_phy, evt->rx_phy);
++
+ 	conn = bt_conn_lookup_handle(handle);
+ 	if (!conn) {
+ 		BT_ERR("Unable to lookup conn for handle %u", handle);
+@@ -1580,6 +1613,10 @@ static void le_conn_param_req(struct net_buf *buf)
+ 	param.latency = sys_le16_to_cpu(evt->latency);
+ 	param.timeout = sys_le16_to_cpu(evt->timeout);
+ 
++	BT_INFO("LL remote conn param req handle=%u min=%u max=%u latency=%u timeout=%u",
++		handle, param.interval_min, param.interval_max, param.latency,
++		param.timeout);
++
+ 	conn = bt_conn_lookup_handle(handle);
+ 	if (!conn) {
+ 		BT_ERR("Unable to lookup conn for handle %u", handle);
+@@ -1605,6 +1642,10 @@ static void le_conn_update_complete(struct net_buf *buf)
+ 	handle = sys_le16_to_cpu(evt->handle);
+ 
+ 	BT_DBG("status 0x%02x, handle %u", evt->status, handle);
++	BT_INFO("LL conn update complete handle=%u status=0x%02x interval=%u latency=%u timeout=%u",
++		handle, evt->status, sys_le16_to_cpu(evt->interval),
++		sys_le16_to_cpu(evt->latency),
++		sys_le16_to_cpu(evt->supv_timeout));
+ 
+ 	conn = bt_conn_lookup_handle(handle);
+ 	if (!conn) {
+@@ -1799,6 +1840,8 @@ static void hci_encrypt_change(struct net_buf *buf)
+ 
+ 	BT_DBG("status 0x%02x handle %u encrypt 0x%02x", evt->status, handle,
+ 	       evt->encrypt);
++	BT_INFO("ENC HCI encrypt change handle=%u status=0x%02x encrypt=0x%02x",
++		handle, evt->status, evt->encrypt);
+ 
+ 	conn = bt_conn_lookup_handle(handle);
+ 	if (!conn) {
+@@ -1874,6 +1917,8 @@ static void hci_encrypt_key_refresh_complete(struct net_buf *buf)
+ 	handle = sys_le16_to_cpu(evt->handle);
+ 
+ 	BT_DBG("status 0x%02x handle %u", evt->status, handle);
++	BT_INFO("ENC HCI key refresh complete handle=%u status=0x%02x", handle,
++		evt->status);
+ 
+ 	conn = bt_conn_lookup_handle(handle);
+ 	if (!conn) {
+@@ -2054,6 +2099,10 @@ static void hci_reset_complete(struct net_buf *buf)
+ static void hci_cmd_done(uint16_t opcode, uint8_t status, struct net_buf *buf)
+ {
+ 	BT_DBG("opcode 0x%04x status 0x%02x buf %p", opcode, status, buf);
++	if (status) {
++		BT_INFO("HCI cmd failed opcode=0x%04x status=0x%02x", opcode,
++			status);
++	}
+ 
+ 	if (net_buf_pool_get(buf->pool_id) != &hci_cmd_pool) {
+ 		BT_WARN("opcode 0x%04x pool id %u pool %p != &hci_cmd_pool %p",
+diff --git a/subsys/bluetooth/host/l2cap.c b/subsys/bluetooth/host/l2cap.c
+index 0a220d51..f33e71a4 100644
+--- a/subsys/bluetooth/host/l2cap.c
++++ b/subsys/bluetooth/host/l2cap.c
+@@ -720,6 +720,9 @@ static void le_conn_param_update_req(struct bt_l2cap *l2cap, uint8_t ident,
+ 	BT_DBG("min 0x%04x max 0x%04x latency: 0x%04x timeout: 0x%04x",
+ 	       param.interval_min, param.interval_max, param.latency,
+ 	       param.timeout);
++	BT_INFO("L2CAP conn param req handle=%u min=%u max=%u latency=%u timeout=%u",
++		conn->handle, param.interval_min, param.interval_max,
++		param.latency, param.timeout);
+ 
+ 	buf = l2cap_create_le_sig_pdu(buf, BT_L2CAP_CONN_PARAM_RSP, ident,
+ 				      sizeof(*rsp));
+diff --git a/subsys/bluetooth/host/smp.c b/subsys/bluetooth/host/smp.c
+index d9f3d151..7335a520 100644
+--- a/subsys/bluetooth/host/smp.c
++++ b/subsys/bluetooth/host/smp.c
+@@ -1970,6 +1970,11 @@ static void smp_timeout(struct k_work *work)
+ 	BT_INFO("SMP timeout user_wait=%u keys_distribution=%u",
+ 		atomic_test_bit(smp->flags, SMP_FLAG_USER),
+ 		atomic_test_bit(smp->flags, SMP_FLAG_KEYS_DISTR));
++	BT_INFO("SMP timeout handle=%u pairing=%u enc_pending=%u encrypt=0x%02x",
++		smp->chan.chan.conn->handle,
++		atomic_test_bit(smp->flags, SMP_FLAG_PAIRING),
++		atomic_test_bit(smp->flags, SMP_FLAG_ENC_PENDING),
++		smp->chan.chan.conn->encrypt);
+ 	BT_ERR("SMP Timeout");
+ 
+ 	smp_pairing_complete(smp, BT_SMP_ERR_UNSPECIFIED);
+@@ -2580,6 +2585,8 @@ static uint8_t legacy_pairing_random(struct bt_smp *smp)
+ 		/* Rand and EDiv are 0 for the STK */
+ 		(void)memset(ediv, 0, sizeof(ediv));
+ 		(void)memset(rand, 0, sizeof(rand));
++		BT_INFO("ENC legacy central confirm ok, start STK encryption handle=%u key_size=%u",
++			conn->handle, get_encryption_key_size(smp));
+ 		if (bt_conn_le_start_encryption(conn, rand, ediv, tmp,
+ 						get_encryption_key_size(smp))) {
+ 			BT_ERR("Failed to start encryption");
+@@ -4728,6 +4735,13 @@ static void bt_smp_disconnected(struct bt_l2cap_chan *chan)
+ 
+ 	BT_DBG("chan %p cid 0x%04x", chan,
+ 	       CONTAINER_OF(chan, struct bt_l2cap_le_chan, chan)->tx.cid);
++	BT_INFO("SMP disconnected handle=%u pairing=%u enc_pending=%u keys_distr=%u timeout=%u encrypt=0x%02x",
++		chan->conn->handle,
++		atomic_test_bit(smp->flags, SMP_FLAG_PAIRING),
++		atomic_test_bit(smp->flags, SMP_FLAG_ENC_PENDING),
++		atomic_test_bit(smp->flags, SMP_FLAG_KEYS_DISTR),
++		atomic_test_bit(smp->flags, SMP_FLAG_TIMEOUT),
++		chan->conn->encrypt);
+ 
+ 	/* Channel disconnected callback is always called from a work handler
+ 	 * so canceling of the timeout work should always succeed.
+@@ -4763,6 +4777,13 @@ static void bt_smp_encrypt_change(struct bt_l2cap_chan *chan,
+ 
+ 	BT_DBG("chan %p conn %p handle %u encrypt 0x%02x hci status 0x%02x",
+ 	       chan, conn, conn->handle, conn->encrypt, hci_status);
++	BT_INFO("ENC smp encrypt_change handle=%u hci_status=0x%02x encrypt=0x%02x enc_pending=%u pairing=%u keys_distr=%u sc=%u local_dist=0x%02x remote_dist=0x%02x",
++		conn->handle, hci_status, conn->encrypt,
++		atomic_test_bit(smp->flags, SMP_FLAG_ENC_PENDING),
++		atomic_test_bit(smp->flags, SMP_FLAG_PAIRING),
++		atomic_test_bit(smp->flags, SMP_FLAG_KEYS_DISTR),
++		atomic_test_bit(smp->flags, SMP_FLAG_SC),
++		smp->local_dist, smp->remote_dist);
+ 
+ 	if (!atomic_test_and_clear_bit(smp->flags, SMP_FLAG_ENC_PENDING)) {
+ 		/* We where not waiting for encryption procedure.

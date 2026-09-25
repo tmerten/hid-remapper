@@ -12,12 +12,15 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
-      - name: Build XIAO SMP trace
+      - name: Build XIAO SMP/encryption trace
         run: |
           docker run -v $PWD:/workdir/project -w /workdir/project/firmware-bluetooth nordicplayground/nrfconnect-sdk:v2.2-branch \
             /bin/bash /workdir/project/firmware-bluetooth/diagnostics/build-debug.sh
           cp firmware-bluetooth/build/zephyr/remapper.uf2 firmware-bluetooth/remapper_seeed_xiao_nrf52840_debug.uf2
+          cp firmware-bluetooth/build/zephyr/.config firmware-bluetooth/remapper_seeed_xiao_nrf52840_debug.config
       - uses: actions/upload-artifact@v7
         with:
           name: artifact-seeed_xiao_nrf52840-debug
-          path: firmware-bluetooth/remapper_seeed_xiao_nrf52840_debug.uf2
+          path: |
+            firmware-bluetooth/remapper_seeed_xiao_nrf52840_debug.uf2
+            firmware-bluetooth/remapper_seeed_xiao_nrf52840_debug.config
